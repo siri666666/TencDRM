@@ -29,7 +29,7 @@ jobs:
           mkdir -p dist/prebuilt
           cp module.prop customize.sh service.sh post-fs-data.sh sepolicy.rule config.prop dist/
           cp out/DRMID-inject out/DRMID-A.so out/DRMID-B.so dist/prebuilt/
-          cp cpuinfo.txt dist/prebuilt/
+          cp prebuilt/cpuinfo.txt dist/prebuilt/
           cd dist && zip -r ../TencDRM.zip . && cd ..
           sha256sum TencDRM.zip > TencDRM.zip.sha256
 
