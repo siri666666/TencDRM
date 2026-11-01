@@ -74,7 +74,7 @@ static void mem_poke(unsigned long addr, const void *buf, size_t len)
 /* my_stringAlloc: 透传 malloc, 捕获 HAL 读取到的属性名 */
 static void *my_stringAlloc(void *ctx, const char *s, size_t len)
 {
-    void *buf = malloc(len + 1);
+    uint8_t *buf = malloc(len + 1);
     if (!buf) abort();
     memcpy(buf, s, len);
     buf[len] = '\0';
@@ -135,7 +135,7 @@ static void my_writeByteArray(const void *p, const uint8_t *arr,
             }
         }
     }
-    ((writeByteArray_t)real_writeByteArray)(p, arr, len, a3, a4, a5);
+    ((writeByteArray_t)real_writeByteArray)(p, arr, len);
 }
 
 /* 定位 libbinder_ndk 的 GOT 槽位并补丁 */
