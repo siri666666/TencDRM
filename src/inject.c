@@ -114,6 +114,25 @@ static unsigned long find_svc(pid_t pid, unsigned long mod_base)
     return 0;
 }
 
+static void logv(const char *tag, unsigned long v)
+{
+    char b[96], hx[17];
+    const char *hxch = "0123456789abcdef";
+    int i, p = 0;
+    for (i = 0; i < 64; i++) b[i] = 0;
+    if (v == 0) { hx[0] = '0'; hx[1] = 0; }
+    else {
+        unsigned long x = v;
+        for (i = 15; i >= 0 && x; i--, x >>= 4) hx[i] = hxch[x & 0xf];
+        p = i + 1;
+    }
+    for (i = 0; tag[i] && i < 40; i++) b[i] = tag[i];
+    b[i] = '='; i++;
+    for (int k = 0; hx[k] && i < 90; k++) b[i++] = hx[k];
+    b[i] = 0;
+    puts(b);
+}
+
 /*
  * 复用远程 svc 指令执行一次系统调用:
  *   x8=nr, x0..x5=参数, pc=svc 指令, lr=陷阱页 (brk)
@@ -166,11 +185,13 @@ int main(int argc, char **argv)
     if (!local_base) local_base = find_module_base(0, "libdl.so");
     if (!local_base) { perror("local base"); return 1; }
 
+    puts("S1:remote-base-scan");
     remote_base = find_module_base(pid, "linker64");
     if (!remote_base) remote_base = find_module_base(pid, "libdl.so");
     if (!remote_base) { perror("remote base"); return 1; }
     remote_dlopen = local_dl - local_base + remote_base;
 
+    puts("S2:svc-scan");
     svc_addr = find_svc(pid, remote_base);
     if (!svc_addr) { perror("no svc insn in remote linker"); return 1; }
 
@@ -190,8 +211,10 @@ int main(int argc, char **argv)
     if (!tid) { perror("no tid"); return 1; }
 
     puts("M1:seize");
+    puts("S3:seize");
     if (ptrace(PTRACE_SEIZE, tid, 0, 0) < 0) { perror("PTRACE_SEIZE"); return 1; }
     puts("M2:interrupt");
+    puts("S4:interrupt");
     ptrace(PTRACE_INTERRUPT, tid, 0, 0);
     waitpid(tid, &status, 0);
     puts("M3:stopped");
@@ -200,6 +223,8 @@ int main(int argc, char **argv)
 
     /* 远程 mmap 一页 (复用 linker 的 svc 指令) */
     puts("M4:mmap-syscall");
+    puts("S5:mmap-call");
+    mmap_ret = remote_syscall(pid, &regs, svc_addr, 252 /*mmap*/, 0, 0x1000,
     mmap_ret = remote_syscall(pid, &regs, svc_addr, 252 /*mmap*/, 0, 0x1000,
                               PROT_READ | PROT_WRITE,
                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0, scratch);
@@ -209,6 +234,8 @@ int main(int argc, char **argv)
         return 1;
     }
     fprintf(stderr, "M5:mmap-ok=%lu", mmap_ret);
+    logv("S5ret-mmap", mmap_ret);
+    scratch = mmap_ret + 0x800;
     scratch = mmap_ret + 0x800;              /* 页内后半段作陷阱区 */
 
     /* 写入 .so 路径 */
@@ -218,6 +245,8 @@ int main(int argc, char **argv)
     remote.iov_base = (void *)mmap_ret;
     remote.iov_len  = strlen(pathbuf) + 1;
     puts("M6:path-written");
+    puts("S6:path-write");
+    if (process_vm_writev(pid, &local, 1, &remote, 1, 0) < 0) {
     if (process_vm_writev(pid, &local, 1, &remote, 1, 0) < 0) {
         perror("process_vm_writev");
         ptrace(PTRACE_DETACH, tid, 0, 0);
@@ -233,6 +262,8 @@ int main(int argc, char **argv)
         regs = saved;
         regs.regs[0] = mmap_ret;
         regs.regs[1] = 2;                    /* RTLD_NOW */
+        regs.regs[30] = scratch;             /* lr = 陷阱 */
+        puts("S7:dlopen-call");
         regs.regs[30] = scratch;             /* lr = 陷阱 */
         puts("M7:dlopen-call");
         regs.pc = remote_dlopen;
