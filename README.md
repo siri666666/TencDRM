@@ -1,0 +1,88 @@
+# TencDRM
+
+**Tencent 游戏 DRMID 伪装 / 设备标记清理模块**（KernelSU / APatch / Magisk 通用，仅 arm64）
+
+> 开源重制版。原模块 `Tenc-ano_tmp` 由 **阿灵 (TG [@Whitelist520](https://t.me/Whitelist520))** 开发，
+> 本仓库由逆向还原生成：shell 层全部重写为可读脚本并去除混淆/到期开关/推广行为，
+> 预编译组件（ptrace 注入器 + DRM 钩子库）版权归原作者所有，此处按原功能保留。
+
+---
+
+## 工作原理
+
+腾讯游戏通过 Widevine DRM 的 `provisioningUniqueId`（媒体 DRM 供应唯一 ID）生成设备标记
+（DRMID），该标记与硬件绑定、刷机不灭。
+
+本模块在检测到受支持的游戏运行时：
+
+1. 用 ptrace 注入器把 `DRMID-A.so`（AIDL 通道）或 `DRMID-B.so`（HIDL 通道）
+   注入 Widevine DRM HAL 进程；
+2. 钩子拦截 binder parcel 中的 `provisioningUniqueId` 字段，
+   替换为安装时生成的**每台设备唯一的盐值派生 ID**；
+3. 游戏侧查询到的设备 ID 与真机历史标记断开，实现"设备标记解决 / 换新设备"效果。
+
+配套功能（均可配置开关）：
+
+| 功能 | 说明 |
+|---|---|
+| 解决设备标记 | 开机收紧设备标记相关文件权限（post-fs-data 阶段） |
+| KILL进程 | 游戏运行时强杀 KILL_LIST 内应用（root 管理器/工具类） |
+| USB调试关闭 | 游戏运行时关闭 USB 调试（开源版**默认关闭**此功能） |
+| rm-rf_FILE | 游戏运行时删除指定目录 |
+| CPU 伪装 | 游戏运行时 bind-mount 伪装 `/proc/cpuinfo`（实验性） |
+| 息屏休眠 | 熄屏时挂起守护循环降低功耗 |
+| 多用户 | 兼容 0~999 全部用户分身 |
+
+## 安装
+
+KernelSU / APatch / Magisk 管理器刷入 zip，或：
+
+```
+su -c magisk --install-module TencDRM.zip   # Magisk
+ksud module install TencDRM.zip             # KernelSU
+```
+
+## 配置
+
+`/data/adb/modules/TencDRM/config.prop`，每 3 秒热重读，改完即生效：
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `GAME_LIST` | 主流腾讯游戏 | 监听的游戏包名（空格分隔），触发器 |
+| `DRMID伪装` | 开启 | DRM 钩子注入总开关 |
+| `DRMID方案` | 安装时自动探测 | A=AIDL / B=HIDL，异常时可切换 |
+| `解决设备标记` | 开启 | 开机收紧标记文件权限 |
+| `KILL进程` / `KILL_LIST` | 开启 | 游戏运行时强杀列表内应用 |
+| `USB调试关闭` | **关闭** | 游戏运行时关 USB 调试（不自动恢复，改自原版默认） |
+| `rm-rf_FILE` | 空 | 游戏运行时删除的目录（**更新版本时请复查**） |
+| `CPU伪装` / `CPU_LIST` | 关闭 | cpuinfo 挂载伪装（实验性） |
+| `息屏休眠` | 开启 | 熄屏降功耗 |
+
+## 与原模块（Tenc-ano_tmp）的差异
+
+| 项 | 原模块 | 本仓库 |
+|---|---|---|
+| 主逻辑 | shc 加密 ELF + 变量密码混淆 | 明文 shell 脚本 |
+| 到期开关 | 看门狗 EXPIRES=20261025 | 无 |
+| 安装推广 | 自动拉起 Telegram 频道 | 无 |
+| USB调试关闭默认值 | 开启（打断 adb） | **关闭** |
+| 列表格式 | 多行引号 | 单行空格分隔 |
+| 预编译组件 | 混淆打包 | `prebuilt/` 独立目录并署名 |
+
+## 验证
+
+安装 `com.liuzh.deviceinfo`（设备信息检测器，原模块自带测试目标），开启任意 GAME_LIST
+游戏后回到检测器查看 DRM ID 是否已变化。
+
+## 免责声明
+
+- 本模块通过伪造 DRM 设备身份对抗游戏风控，属于灰色地带的设备指纹对抗工具；
+- 仅限在自己的设备上学习研究使用，使用本模块产生的任何账号后果自行承担；
+- 伪装身份与 keybox 一样具有唯一性，**不要外传设备上的 `prebuilt/DRMID` 盐值文件**；
+- 不要用于任何作弊行为。
+
+## License
+
+重制的脚本部分以 [MIT](LICENSE) 发布。
+`prebuilt/` 目录下的二进制（DRMID-inject / DRMID-A.so / DRMID-B.so / isKeyguardLocked.dex）
+版权归原作者 **阿灵** 所有，此处仅为保持功能完整性而随仓库分发。

@@ -1,0 +1,9 @@
+# 允许 Widevine/DRM HAL 进程读取模块放置在 shell_data_file 上下文的注入物
+allow vendor_hal_drm_widevine shell_data_file file { read open getattr map execute }
+allow vendor_hal_drm_widevine shell_data_file dir search
+allow hal_drm_default shell_data_file file { read open getattr map execute }
+allow hal_drm_default shell_data_file dir search
+allow hal_drm_widevine shell_data_file file { read open getattr map execute }
+allow hal_drm_widevine shell_data_file dir search
+allow mediadrmserver shell_data_file file { read open getattr map execute }
+allow mediadrmserver shell_data_file dir search

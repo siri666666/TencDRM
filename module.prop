@@ -1,0 +1,6 @@
+id=TencDRM
+name=TencDRM
+version=v1.0.0
+versionCode=20261101
+author=original by 阿灵 (TG @Whitelist520) · opensource rewrite by siri666666
+description=Tencent 游戏 DRMID 伪装 / 设备标记清理。监听游戏进程并向 Widevine DRM HAL 注入钩子, 使游戏获取到伪装的 DRM 设备 ID。兼容 0~999 全部用户分身, 所有功能可在 config.prop 自定义开关。本仓库为开源重制版, 预编译组件版权归原作者所有。
