@@ -176,6 +176,7 @@ int main(int argc, char **argv)
         printf("usage: inject <pid> <so>\n");
         return 1;
     }
+    setvbuf(stdout, NULL, _IONBF, 0);
     pid    = (pid_t)atoi(argv[1]);
     sopath = argv[2];
 
