@@ -97,9 +97,9 @@ static void *my_readString(const void *p, void *a1, void *a2,
     res = ((readString_t)real_readString)(p, a1, (void *)my_stringAlloc,
                                           a3, a4, a5);
     t_gate = 0;
-    if (res && t_name[0] &&
-        (strcmp(t_name, "provisioningUniqueId") == 0 ||
-         strcmp(t_name, "deviceUniqueId") == 0)) {
+    if (!res && t_name[0] &&
+        (strcmp(t_name, "deviceUniqueId") == 0 ||
+         strcmp(t_name, "provisioningUniqueId") == 0)) {
         t_gate = 1;
         n_read_total++;
     }
@@ -114,13 +114,14 @@ static void my_writeByteArray(const void *p, const uint8_t *arr,
     int  plen, gate = t_gate;
 
     t_gate = 0;                              /* 一次性消费 */
-    if (gate && arr && len > 0) {
+    if (gate && arr && len == 32) {
         memset(prop, 0, sizeof(prop));
         plen = __system_property_get(PROP_ID, prop);
         if (plen >= 2) {
             uint8_t fake[SPOOF_LEN];
             int pairs = (plen - 2) / 2;
-            if (pairs > SPOOF_LEN) pairs = SPOOF_LEN;
+            if (pairs > SPOOF_LEN - 1) pairs = SPOOF_LEN - 1;
+            pairs += 1;
             int ok = 1;
             for (int i = 0; i < pairs && ok; i++) {
                 int hi = hexval(prop[1 + i * 2]);

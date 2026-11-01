@@ -1,228 +1,171 @@
 /*
  * inject.c — ptrace 远程 dlopen 注入器 (arm64 Android)
- * 重建自原模块 DRMID-inject 的行为: inject <pid> <so-path>
+ * 忠实重建自原模块 DRMID-inject (IDA 反编译对照)。
  *
- * 核心技巧 (标准 syscall 劫持):
- *   1. PTRACE_SEIZE + PTRACE_INTERRUPT 强停目标线程
- *      (对阻塞在 binder ioctl / epoll 的线程同样有效)
- *   2. GETREGSET 保存现场; 此时该线程有一个"挂起的阻塞 syscall"
- *   3. process_vm_writev 把 .so 路径写到线程栈下方 (sp-0x800)
- *   4. 恢复时: x0=路径地址, x1=RTLD_NOW, pc=远程 dlopen, lr=原 pc;
- *      NT_ARM_SYSTEM_CALL 把挂起的 syscall 改号为 sched_yield,
- *      使内核的 syscall 重启机制不会把线程拉回阻塞调用
- *   5. dlopen 返回到原 pc, 线程回到自己的循环; 注入库构造函数完成钩子安装
- *
- * 注: 挂起的 ioctl 会被本次注入消耗, HAL 的 binder 线程池可自行恢复。
+ * 原版手法:
+ *   1. sym_off() 解析磁盘上的 libdl.so ELF, 取 dlopen/dlclose 的 st_value
+ *   2. /proc/<pid>/maps 找 libdl.so 基址 → 远程 dlopen/dlclose 地址
+ *   3. PTRACE_ATTACH → POKETEXT 在 dlclose 入口写入 BRK #0 (陷阱)
+ *   4. .so 路径写入 (sp&~0xf)-512
+ *   5. 寄存器: x0=路径, x1=RTLD_NOW, pc=远程 dlopen, lr=dlclose(陷阱)
+ *   6. CONT → dlopen 执行完返回时撞上 BRK → SIGTRAP → x0 即句柄
+ *   7. 恢复 dlclose 原指令与寄存器 → PTRACE_DETACH
  */
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <unistd.h>
+#include <elf.h>
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <sys/uio.h>
+#include <sys/mman.h>
 #include <sys/user.h>
-#include <linux/elf.h>
-
-#ifndef NT_ARM_SYSTEM_CALL
-#define NT_ARM_SYSTEM_CALL 0x404
-#endif
 
 #define MAPS_LINE_LEN 512
 
-static void remote_poke(pid_t pid, unsigned long addr,
-                        const void *buf, size_t len)
+/* 解析 ELF 文件, 返回符号在模块内的偏移 (st_value); 失败返回 0 */
+static unsigned long sym_off(const char *path, const char *sym)
 {
-    struct iovec local = { (void *)buf, len };
-    struct iovec remote = { (void *)addr, len };
-    process_vm_writev(pid, &local, 1, &remote, 1, 0);
-}
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    off_t sz = lseek(fd, 0, SEEK_END);
+    if (sz <= 0) { close(fd); return 0; }
+    lseek(fd, 0, SEEK_SET);
+    unsigned char *map = mmap(0, sz, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    if (map == (unsigned char *)-1) return 0;
 
-static unsigned long find_module_base(pid_t pid, const char *mod)
-{
-    char path[64], line[MAPS_LINE_LEN];
-    FILE *f;
-    unsigned long best = 0;
-
-    if (pid > 0)
-        snprintf(path, sizeof(path), "/proc/%d/maps", pid);
-    else
-        snprintf(path, sizeof(path), "/proc/self/maps");
-
-    f = fopen(path, "r");
-    if (!f) return 0;
-    while (fgets(line, sizeof(line), f)) {
-        unsigned long start, end;
-        char perms[8], nm[MAPS_LINE_LEN];
-        nm[0] = '\0';
-        if (sscanf(line, "%lx-%lx %7s %*s %*s %*s %255s", &start, &end,
-                   perms, nm) < 4)
-            continue;
-        if (strstr(nm, mod) && start > best && (start & 0xfff) == 0)
-            best = start;
-    }
-    fclose(f);
-    return best;
-}
-
-/* 在远程 linker64 里找一条现成的 svc #0 (0xd4000001), 备用于 syscall 步进 */
-static unsigned long find_svc(pid_t pid)
-{
-    char path[64], line[MAPS_LINE_LEN];
-    FILE *f;
-    unsigned long start = 0, end = 0, addr;
-    unsigned char *buf;
-    size_t len;
-
-    snprintf(path, sizeof(path), "/proc/%d/maps", pid);
-    f = fopen(path, "r");
-    if (!f) return 0;
-    while (fgets(line, sizeof(line), f)) {
-        char nm[MAPS_LINE_LEN];
-        unsigned long s, e;
-        char perms[8];
-        nm[0] = '\0';
-        if (sscanf(line, "%lx-%lx %7s %*s %*s %*s %255s", &s, &e, perms, nm) < 4)
-            continue;
-        if (strstr(nm, "linker64") && strstr(perms, "x")) {
-            start = s; end = e;
+    unsigned long result = 0;
+    Elf64_Ehdr *eh = (Elf64_Ehdr *)map;
+    int shnum = eh->e_shnum;
+    if (shnum) {
+        Elf64_Shdr *sh = (Elf64_Shdr *)(map + eh->e_shoff);
+        unsigned char *symtab = 0, *strtab = 0;
+        size_t count = 0;
+        for (int i = 0; i < shnum; i++) {
+            if (sh[i].sh_type == SHT_DYNSYM) {
+                symtab = map + sh[i].sh_offset;
+                count  = sh[i].sh_size / sizeof(Elf64_Sym);
+                strtab = map + sh[sh[i].sh_link].sh_offset;
+            }
+        }
+        if (count && strtab) {
+            Elf64_Sym *s = (Elf64_Sym *)symtab;
+            for (size_t i = 0; i < count; i++) {
+                if (s[i].st_name && !strcmp(strtab + s[i].st_name, sym)) {
+                    result = s[i].st_value;
+                    break;
+                }
+            }
         }
     }
-    fclose(f);
-    if (!start) return 0;
-
-    len = end - start;
-    buf = malloc(len);
-    if (!buf) return 0;
-    {
-        struct iovec l = { buf, len }, r = { (void *)start, len };
-        process_vm_readv(pid, &l, 1, &r, 1, 0);
-    }
-    for (addr = start; addr < start + len - 4; addr++) {
-        size_t i = addr - start;
-        if (buf[i] == 0x01 && buf[i+1] == 0x00 && buf[i+2] == 0x00 && buf[i+3] == 0xd4) {
-            free(buf);
-            return addr;
-        }
-    }
-    free(buf);
-    return 0;
-}
-
-static void set_regs_and_syscall(pid_t tid, struct user_pt_regs *regs, long nr)
-{
-    struct iovec iov = { regs, sizeof(*regs) };
-    ptrace(PTRACE_SETREGSET, tid, (void *)NT_PRSTATUS, iov);
-    if (nr >= 0) {
-        long call = nr;
-        struct iovec siov = { &call, sizeof(call) };
-        ptrace(PTRACE_SETREGSET, tid, (void *)NT_ARM_SYSTEM_CALL, &siov);
-    }
+    munmap(map, sz);
+    return result;
 }
 
 int main(int argc, char **argv)
 {
-    pid_t pid, tid;
-    const char *sopath;
-    unsigned long local_dl, local_base, remote_base, remote_dlopen, svc_addr;
-    unsigned long path_addr;
-    struct user_pt_regs regs, saved;
-    struct iovec iov = { &regs, sizeof(regs) };
-    char pathbuf[256], taskdir[64];
-    struct iovec local, remote;
-    int status, w;
-
-    if (argc != 3) {
+    if (argc <= 2) {
         printf("usage: inject <pid> <so>\n");
-        return 1;
+        return 2;
     }
-    pid    = (pid_t)atoi(argv[1]);
-    sopath = argv[2];
+    int pid = atoi(argv[1]);
+    const char *sopath = argv[2];
 
-    local_dl = (unsigned long)dlsym(RTLD_DEFAULT, "dlopen");
-    if (!local_dl) { perror("dlsym dlopen"); return 1; }
-    local_base = find_module_base(0, "linker64");
-    if (!local_base) local_base = find_module_base(0, "libdl.so");
-    if (!local_base) { perror("local base"); return 1; }
+    /* dlopen/dlclose 偏移: 优先 APEX 路径, 回退 /system/lib64 */
+    const char *libdl_path = "/apex/com.android.runtime/lib64/bionic/libdl.so";
+    unsigned long off_dlopen = sym_off(libdl_path, "dlopen");
+    int need_maps = 0;
+    if (!off_dlopen) {
+        libdl_path = "/system/lib64/libdl.so";
+        off_dlopen = sym_off(libdl_path, "dlopen");
+        if (!off_dlopen) need_maps = 1;
+    }
 
-    remote_base = find_module_base(pid, "linker64");
-    if (!remote_base) remote_base = find_module_base(pid, "libdl.so");
-    if (!remote_base) { perror("remote base"); return 1; }
-    remote_dlopen = local_dl - local_base + remote_base;
-    svc_addr = find_svc(pid);
-
-    /* 选一个线程并 SEIZE + INTERRUPT (阻塞中的线程同样会被强停) */
-    snprintf(taskdir, sizeof(taskdir), "/proc/%d/task", pid);
-    {
-        FILE *f = fopen(taskdir, "r");
-        char tbuf[64];
-        tid = 0;
-        if (!f) { perror("task dir"); return 1; }
-        while (fgets(tbuf, sizeof(tbuf), f)) {
-            tid = (pid_t)atoi(tbuf);
-            if (tid > 0) break;
+    /* /proc/<pid>/maps 找 libdl.so 基址 (第一行匹配) */
+    unsigned long base = 0;
+    char maps[64], line[MAPS_LINE_LEN];
+    snprintf(maps, sizeof(maps), "/proc/%d/maps", pid);
+    FILE *f = fopen(maps, "r");
+    if (f) {
+        while (fgets(line, sizeof(line), f)) {
+            if (strstr(line, "libdl.so") && sscanf(line, "%lx", &base) == 1)
+                break;
         }
         fclose(f);
+    } else {
+        need_maps = 1;
     }
-    if (!tid) { perror("no tid"); return 1; }
-
-    printf("target tid %d\n", tid);
-    if (ptrace(PTRACE_SEIZE, tid, 0, 0) < 0) { perror("PTRACE_SEIZE"); return 1; }
-    ptrace(PTRACE_INTERRUPT, tid, 0, 0);
-    waitpid(tid, &status, 0);
-    ptrace(PTRACE_GETREGSET, tid, (void *)NT_PRSTATUS, iov);
-    saved = regs;
-    printf("interrupted: pc=%llx sp=%llx\n",
-           (unsigned long long)regs.pc, (unsigned long long)regs.sp);
-
-    /* .so 路径写到线程栈下方 (避开 red zone) */
-    path_addr = (saved.sp - 0x800) & ~0xfUL;
-    local.iov_base  = (void *)sopath;
-    local.iov_len   = strlen(sopath) + 1;
-    remote.iov_base = (void *)path_addr;
-    remote.iov_len  = strlen(sopath) + 1;
-    if (process_vm_writev(pid, &local, 1, &remote, 1, 0) < 0) {
-        perror("process_vm_writev");
-        ptrace(PTRACE_DETACH, tid, 0, 0);
+    if ((need_maps & 1) || !base || !off_dlopen) {
+        printf("resolve fail b=%lx o=%lx\n", base, off_dlopen);
         return 1;
     }
 
-    /* 调用 dlopen(path, RTLD_NOW=2):
-     * pc = 远程 dlopen, lr = 原 pc (dlopen 返回后线程回到自己的循环),
-     * NT_ARM_SYSTEM_CALL 把挂起的阻塞 syscall 改号为 sched_yield,
-     * 避免 syscall 重启机制把线程拉回阻塞调用 */
-    regs = saved;
-    regs.regs[0] = path_addr;
-    regs.regs[1] = 2;                        /* RTLD_NOW */
-    regs.regs[30] = saved.pc;                /* lr = 原返回点 */
-    regs.pc = remote_dlopen;
-    set_regs_and_syscall(tid, &regs, 124 /* sched_yield */);
-
-    ptrace(PTRACE_CONT, tid, 0, 0);
-
-    /* 轮询 maps 确认钩子已装 (最多 10 秒) */
-    {
-        char maps[64], line[512];
-        int found = 0;
-        snprintf(maps, sizeof(maps), "/proc/%d/maps", pid);
-        for (w = 0; w < 20 && !found; w++) {
-            usleep(500 * 1000);
-            FILE *f = fopen(maps, "r");
-            if (!f) break;
-            while (fgets(line, sizeof(line), f)) {
-                if (strstr(line, "DRMID_")) { found = 1; break; }
-            }
-            fclose(f);
-        }
-        printf("hook %s after %d ms\n", found ? "DETECTED" : "not seen", w * 500);
+    unsigned long off_dlclose = sym_off(libdl_path, "dlclose");
+    if (!base || !off_dlopen || !off_dlclose) {
+        printf("resolve fail b=%lx o=%lx cl=%lx\n", base, off_dlopen, off_dlclose);
+        return 1;
     }
 
-    /* 恢复 seized 线程的寄存器现场并分离 */
-    regs = saved;
-    ptrace(PTRACE_SETREGSET, tid, (void *)NT_PRSTATUS, iov);
-    ptrace(PTRACE_DETACH, tid, 0, 0);
-    return 0;
+    unsigned long remote_dlopen  = base + off_dlopen;
+    unsigned long remote_dlclose = base + off_dlclose;
+    printf("dlopen=%lx ra=%lx\n", remote_dlopen, remote_dlclose);
+
+    if (ptrace(PTRACE_ATTACH, pid, 0, 0) < 0) {
+        perror("attach");
+        return 1;
+    }
+    int status;
+    waitpid(pid, &status, 0);
+
+    struct user_pt_regs regs;                /* 272 字节, 与原版 GETREGSET 一致 */
+    struct iovec iov = { &regs, sizeof(regs) };
+    iov.iov_len = 272;
+    if (ptrace(PTRACE_GETREGSET, pid, (void *)1 /*NT_PRSTATUS*/, &iov) & 0x80000000) {
+        perror("getregs");
+        ptrace(PTRACE_DETACH, pid, 0, 0);
+        return 1;
+    }
+    struct user_pt_regs orig = regs;
+
+    /* dlclose 入口写入 BRK #0 (保留原值高 32 位以防万一) */
+    unsigned long orig_word = ptrace(PTRACE_PEEKTEXT, pid, remote_dlclose, 0);
+    ptrace(PTRACE_POKETEXT, pid, remote_dlclose,
+           (orig_word & 0xFFFFFFFF00000000ULL) | 0xD4200000ULL);
+
+    /* .so 路径写到栈下对齐区 */
+    unsigned long sp_aligned = regs.sp & ~0xfUL;
+    unsigned long path_addr  = sp_aligned - 512;
+    struct iovec lvec = { (void *)sopath, strlen(sopath) + 1 };
+    struct iovec rvec = { (void *)path_addr, strlen(sopath) + 1 };
+    process_vm_writev(pid, &lvec, 1, &rvec, 1, 0);
+
+    /* 寄存器: x0=路径, x1=RTLD_NOW, sp=栈区-768, pc=dlopen, lr=dlclose(陷阱) */
+    memset(&regs, 0, sizeof(regs));
+    regs.regs[0] = path_addr;
+    regs.regs[1] = 2;
+    regs.sp = sp_aligned - 768;
+    regs.regs[30] = remote_dlclose;
+    regs.pc = remote_dlopen;
+    ptrace(PTRACE_SETREGSET, pid, (void *)1, &iov);
+    ptrace(PTRACE_CONT, pid, 0, 0);
+    waitpid(pid, &status, 0);
+    ptrace(PTRACE_GETREGSET, pid, (void *)1, &iov);
+
+    int sig = (status & 0xff) == 127 ? (status >> 8) & 0xff : -1;
+    printf("dlopen -> handle=%llx sig=%d pc=%llx\n",
+           (unsigned long long)regs.regs[0], sig, (unsigned long long)regs.pc);
+
+    /* 恢复 dlclose 原指令与原始寄存器 */
+    ptrace(PTRACE_POKETEXT, pid, remote_dlclose, orig_word);
+    iov.iov_base = &orig;
+    ptrace(PTRACE_SETREGSET, pid, (void *)1, &iov);
+    ptrace(PTRACE_DETACH, pid, 0, 0);
+    return regs.regs[0] == 0;
 }
