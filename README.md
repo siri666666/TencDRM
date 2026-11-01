@@ -82,7 +82,11 @@ make NDK=/path/to/android-ndk-r26d   # 产出 out/ 下的注入器与两个钩�
 
 ## 验证
 
-安装 `com.liuzh.deviceinfo`（设备信息检测器，原模块自带测试目标），开启任意 GAME_LIST
+已在 OnePlus Pad 2 Pro (OPD2404 / ColorOS 16 / 内核 6.1) 实测:
+注入器成功将钩子库加载进 Widevine DRM HAL 进程, 钩子完成 libbinder_ndk 的 GOT
+补丁 (logcat `DRMID: init: hooks armed`), HAL 进程稳定无崩溃。
+
+功能级验证: 安装 `com.liuzh.deviceinfo`（设备信息检测器），开启任意 GAME_LIST
 游戏后回到检测器查看 DRM ID 是否已变化。
 
 ## 免责声明

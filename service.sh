@@ -98,7 +98,7 @@ while true; do
         case "$e" in
             */android.hardware.drm*widevine*|*/mediadrmserver)
                 # 已注入 (maps 含标记) 则跳过
-                grep -q "DRMID_" /proc/$p/maps 2>/dev/null && continue
+                grep -q "DRMID-A" /proc/$p/maps 2>/dev/null && continue
                 so=/data/local/tmp/DRMID_${SCHEME}_$p.so
                 cp "$PRE/DRMID-$SCHEME.so" "$so" 2>/dev/null
                 chmod 755 "$so" 2>/dev/null
