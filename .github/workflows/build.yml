@@ -1,0 +1,49 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r26d
+
+      - name: build
+        run: make NDK=${{ steps.ndk.outputs.ndk-path }}
+
+      - name: package module zip
+        run: |
+          mkdir -p dist/prebuilt
+          cp module.prop customize.sh service.sh post-fs-data.sh sepolicy.rule config.prop dist/
+          cp out/DRMID-inject out/DRMID-A.so out/DRMID-B.so dist/prebuilt/
+          cp prebuilt/cpuinfo.txt dist/prebuilt/
+          cd dist && zip -r ../TencDRM.zip . && cd ..
+          sha256sum TencDRM.zip > TencDRM.zip.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TencDRM.zip
+          path: |
+            TencDRM.zip
+            TencDRM.zip.sha256
+
+      - name: attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            TencDRM.zip
+            TencDRM.zip.sha256

@@ -1,0 +1,34 @@
+# TencDRM 配置文件
+# 所有列表均为单行空格分隔; 修改后即时生效 (每 3 秒重读), 无需重启
+# TencDRM 配置 · github.com/siri666666/TencDRM
+
+# 监听的游戏包名列表 (空格分隔)
+# 只有此列表内的游戏运行时, 以下功能才会触发
+GAME_LIST=com.tencent.tmgp.sgame com.tencent.tmgp.pubgmhd com.tencent.tmgp.dfm com.garena.game.df com.proxima.dfm com.tencent.mf.uam com.tencent.tmgp.cod com.tencent.tmgp.codev com.tencent.tmgp.cf com.tencent.lolm com.tencent.rmcn com.liuzh.deviceinfo
+
+# 解决设备标记: 开机时将设备标记相关文件设为禁止读取 (post-fs-data 阶段生效)
+解决设备标记=开启
+
+# DRMID 伪装: 向 Widevine DRM HAL 注入钩子并返回伪装 ID
+DRMID伪装=开启
+# 方案 A=AIDL 通道 / B=HIDL 通道, 安装时自动探测, 如遇异常可手动切换
+DRMID方案=A
+
+# CPU 伪装: 游戏运行时将 cpuinfo.txt 挂载至 /proc/cpuinfo (实验性)
+CPU伪装=关闭
+# 需要启用 CPU 伪装的游戏包名列表 (空格分隔)
+CPU_LIST=com.garena.game.df com.proxima.dfm com.liuzh.deviceinfo
+
+# 游戏运行时强杀以下应用进程 (防止被游戏扫描)
+KILL进程=开启
+KILL_LIST=bin.mt.plus bin.mt.termex bin.mt.plus.canary me.bmax.apatch github.ColdAsSunny.Kernel mi.yuki.folk me.yuki.folk me.weishu.kernelsu com.sukisu.ultra com.qytools
+
+# 游戏运行时自动关闭 USB 调试 (不会自动恢复!)
+# 开源版默认改为关闭以保护 adb 工作流; 需要原版行为请改为 开启
+USB调试关闭=关闭
+
+# 游戏运行时自动删除的目录 (空格分隔, 路径必须准确!)
+rm-rf_FILE=
+
+# 息屏休眠: 熄屏时挂起大部分工作降低功耗
+息屏休眠=开启
