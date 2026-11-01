@@ -225,7 +225,6 @@ int main(int argc, char **argv)
     puts("M4:mmap-syscall");
     puts("S5:mmap-call");
     mmap_ret = remote_syscall(pid, &regs, svc_addr, 252 /*mmap*/, 0, 0x1000,
-    mmap_ret = remote_syscall(pid, &regs, svc_addr, 252 /*mmap*/, 0, 0x1000,
                               PROT_READ | PROT_WRITE,
                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0, scratch);
     if (!mmap_ret || mmap_ret == (unsigned long)-1) {
