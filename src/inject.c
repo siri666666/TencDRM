@@ -246,7 +246,6 @@ int main(int argc, char **argv)
     puts("M6:path-written");
     puts("S6:path-write");
     if (process_vm_writev(pid, &local, 1, &remote, 1, 0) < 0) {
-    if (process_vm_writev(pid, &local, 1, &remote, 1, 0) < 0) {
         perror("process_vm_writev");
         ptrace(PTRACE_DETACH, tid, 0, 0);
         return 1;
