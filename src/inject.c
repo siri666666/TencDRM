@@ -7,6 +7,7 @@
  *   → 远程 mmap 一页 → process_vm_writev 写入 .so 路径
  *   → 远程调用 dlopen(path, RTLD_NOW) → PTRACE_DETACH
  */
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,7 @@
 #include <sys/uio.h>
 #include <sys/mman.h>
 #include <sys/user.h>
+#include <linux/elf.h>
 
 #define MAPS_LINE_LEN 512
 
@@ -52,12 +54,12 @@ static unsigned long find_module_base(pid_t pid, const char *mod)
 }
 
 /* ptrace 远程系统调用: 设置 x8=nr 并执行, 返回 x0 */
-static long remote_syscall(pid_t pid, struct user_regs_struct *regs, long nr,
+static long remote_syscall(pid_t pid, struct user_pt_regs *regs, long nr,
                            unsigned long a0, unsigned long a1,
                            unsigned long a2, unsigned long a3,
                            unsigned long a4, unsigned long a5)
 {
-    struct user_regs_struct r = *regs, out;
+    struct user_pt_regs r = *regs, out;
     struct iovec iov = { &r, sizeof(r) };
 
     r.regs[8] = (unsigned long)nr;          /* x8 = syscall nr */
@@ -78,7 +80,7 @@ int main(int argc, char **argv)
     pid_t pid;
     const char *sopath;
     unsigned long local_dl, local_base, remote_base, remote_dlopen;
-    struct user_regs_struct regs, orig;
+    struct user_pt_regs regs, orig;
     struct iovec iov = { &regs, sizeof(regs) };
     long mmap_ret;
     unsigned long remote_buf;
@@ -135,7 +137,7 @@ int main(int argc, char **argv)
     remote_syscall(pid, &regs, 0, 0, 0, 0, 0, 0, 0);  /* 占位 */
     {
         /* 直接以函数调用方式: 恢复原始寄存器后设置 pc=remote_dlopen */
-        struct user_regs_struct c = orig;
+        struct user_pt_regs c = orig;
         struct iovec cv = { &c, sizeof(c) };
         c.regs[0] = remote_buf;
         c.regs[1] = 2;                       /* RTLD_NOW */
