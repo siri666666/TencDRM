@@ -4,7 +4,7 @@
 
 > 开源重制版。原模块 `Tenc-ano_tmp` 由 **阿灵 (TG [@Whitelist520](https://t.me/Whitelist520))** 开发，
 > 本仓库由逆向还原生成：shell 层全部重写为可读脚本并去除混淆/到期开关/推广行为，
-> 预编译组件（ptrace 注入器 + DRM 钩子库）版权归原作者所有，此处按原功能保留。
+> 原始预编译二进制已从仓库移除, 由 src/ 下的可构建源码替代 (GitHub Actions 自动构建)。
 
 ---
 
@@ -35,12 +35,23 @@
 
 ## 安装
 
-KernelSU / APatch / Magisk 管理器刷入 zip，或：
+从 [Releases](https://github.com/siri666666/TencDRM/releases) 或
+[Actions 构建产物](https://github.com/siri666666/TencDRM/actions) 下载 `TencDRM.zip`
+（CI 用官方 NDK 从 `src/` 构建，可复现），管理器刷入或：
 
 ```
 su -c magisk --install-module TencDRM.zip   # Magisk
 ksud module install TencDRM.zip             # KernelSU
 ```
+
+## 构建（完全开源，无预编译黑盒）
+
+```bash
+make NDK=/path/to/android-ndk-r26d   # 产出 out/ 下的注入器与两个钩子库
+```
+
+或直接推送触发 GitHub Actions 自动构建（`.github/workflows/build.yml`）。
+`prebuilt/DRMID`（64 位 hex 盐值）由安装器在设备上随机生成，不入库。
 
 ## 配置
 
@@ -67,7 +78,7 @@ ksud module install TencDRM.zip             # KernelSU
 | 安装推广 | 自动拉起 Telegram 频道 | 无 |
 | USB调试关闭默认值 | 开启（打断 adb） | **关闭** |
 | 列表格式 | 多行引号 | 单行空格分隔 |
-| 预编译组件 | 混淆打包 | `prebuilt/` 独立目录并署名 |
+| 二进制 | 混淆预编译 | `src/` 全源码 + NDK CI 构建 |
 
 ## 验证
 

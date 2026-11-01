@@ -22,7 +22,8 @@ case "$SCHEME" in
 esac
 
 # 等待用户解锁 (解锁前 DRM HAL / am 不可用)
-while [ "$(/system/bin/app_process -Djava.class.path=$PRE/isKeyguardLocked.dex /system/bin com.rosan.shell.ActiviteJava)" = "true" ]; do
+# 纯 shell 实现: dumpsys trust 的 deviceLocked 字段 (无安全锁的设备恒为 0, 直接放行)
+while dumpsys trust 2>/dev/null | grep -q 'deviceLocked=1'; do
     sleep 2
 done
 

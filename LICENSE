@@ -22,10 +22,10 @@ SOFTWARE.
 
 ---------------------------------------------------------------------------
 
-NOTICE ON PREBUILT COMPONENTS (prebuilt/ directory):
+ATTRIBUTION:
 
-The files DRMID-inject, DRMID-A.so, DRMID-B.so and isKeyguardLocked.dex are
-pre-compiled ARM64 binaries originally created by the author of the module
-"Tenc-ano_tmp" (阿灵, TG @Whitelist520). They are redistributed here solely to
-preserve module functionality; all rights remain with the original author.
-No source code for these binaries is contained in this repository.
+TencDRM is an opensource rewrite of the module "Tenc-ano_tmp" by 阿灵
+(TG @Whitelist520). The original author's design (DRM hook mechanism,
+injector approach and feature set) is credited in README.md. The original
+pre-compiled binaries have been replaced by source code in src/ that can be
+built with the Android NDK.
