@@ -208,8 +208,7 @@ int main(int argc, char **argv)
         ptrace(PTRACE_DETACH, tid, 0, 0);
         return 1;
     }
-    fprintf(stderr, "M5:mmap-ok=%lu
-", mmap_ret);
+    fprintf(stderr, "M5:mmap-ok=%lu", mmap_ret);
     scratch = mmap_ret + 0x800;              /* 页内后半段作陷阱区 */
 
     /* 写入 .so 路径 */
