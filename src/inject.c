@@ -189,21 +189,17 @@ int main(int argc, char **argv)
     }
     if (!tid) { perror("no tid"); return 1; }
 
-    fprintf(stderr, "M1:seize
-");
+    puts("M1:seize");
     if (ptrace(PTRACE_SEIZE, tid, 0, 0) < 0) { perror("PTRACE_SEIZE"); return 1; }
-    fprintf(stderr, "M2:interrupt
-");
+    puts("M2:interrupt");
     ptrace(PTRACE_INTERRUPT, tid, 0, 0);
     waitpid(tid, &status, 0);
-    fprintf(stderr, "M3:stopped
-");
+    puts("M3:stopped");
     ptrace(PTRACE_GETREGSET, tid, (void *)NT_PRSTATUS, iov);
     saved = regs;
 
     /* 远程 mmap 一页 (复用 linker 的 svc 指令) */
-    fprintf(stderr, "M4:mmap-syscall
-");
+    puts("M4:mmap-syscall");
     mmap_ret = remote_syscall(pid, &regs, svc_addr, 252 /*mmap*/, 0, 0x1000,
                               PROT_READ | PROT_WRITE,
                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0, scratch);
@@ -222,8 +218,7 @@ int main(int argc, char **argv)
     local.iov_len   = strlen(pathbuf) + 1;
     remote.iov_base = (void *)mmap_ret;
     remote.iov_len  = strlen(pathbuf) + 1;
-    fprintf(stderr, "M6:path-written
-");
+    puts("M6:path-written");
     if (process_vm_writev(pid, &local, 1, &remote, 1, 0) < 0) {
         perror("process_vm_writev");
         ptrace(PTRACE_DETACH, tid, 0, 0);
@@ -240,15 +235,13 @@ int main(int argc, char **argv)
         regs.regs[0] = mmap_ret;
         regs.regs[1] = 2;                    /* RTLD_NOW */
         regs.regs[30] = scratch;             /* lr = 陷阱 */
-        fprintf(stderr, "M7:dlopen-call
-");
+        puts("M7:dlopen-call");
         regs.pc = remote_dlopen;
         ptrace(PTRACE_SETREGSET, pid, (void *)NT_PRSTATUS, iov);
         ptrace(PTRACE_CONT, pid, 0, 0);
         waitpid(pid, &status, 0);            /* dlopen 返回 → 落入陷阱 */
         ptrace(PTRACE_GETREGSET, pid, (void *)NT_PRSTATUS, iov);
-        fprintf(stderr, "M8:trap-hit
-");
+        puts("M8:trap-hit");
         remote_poke(pid, scratch, nop, 4);   /* 陷阱位复原为 nop */
     }
 
