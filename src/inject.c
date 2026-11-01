@@ -70,9 +70,8 @@ static long remote_syscall(pid_t pid, struct user_pt_regs *regs, long nr,
     ptrace(PTRACE_CONT, pid, 0, 0);
     waitpid(pid, 0, 0);
     ptrace(PTRACE_GETREGSET, pid, (void *)NT_PRSTATUS, &iov);
-    out = r;
-    ptrace(PTRACE_SETREGSET, pid, (void *)NT_PRSTATUS, &iov);
-    return out.regs[0];
+    *regs = r;                              /* 回写当前寄存器状态 */
+    return r.regs[0];
 }
 
 int main(int argc, char **argv)
