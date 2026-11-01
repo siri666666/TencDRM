@@ -22,6 +22,7 @@
 #include <sys/mman.h>
 #include <sys/user.h>
 #include <linux/elf.h>
+#include <dirent.h>
 
 #define MAPS_LINE_LEN 512
 
@@ -176,15 +177,15 @@ int main(int argc, char **argv)
     /* PTRACE_SEIZE 不停线程; PTRACE_INTERRUPT 可强停阻塞中的线程 */
     snprintf(taskdir, sizeof(taskdir), "/proc/%d/task", pid);
     {
-        FILE *f = fopen(taskdir, "r");
-        char tbuf[64];
+        DIR *d = opendir(taskdir);
+        struct dirent *de;
         tid = 0;
-        if (!f) { perror("task dir"); return 1; }
-        while (fgets(tbuf, sizeof(tbuf), f)) {
-            tid = (pid_t)atoi(tbuf);
-            if (tid > 0) break;
+        if (!d) { perror("task dir"); return 1; }
+        while ((de = readdir(d)) != NULL) {
+            int t = atoi(de->d_name);
+            if (t > 0) { tid = (pid_t)t; break; }
         }
-        fclose(f);
+        closedir(d);
     }
     if (!tid) { perror("no tid"); return 1; }
 
